@@ -102,10 +102,8 @@ class StudipSync:
             if dejsonlz4PathLoc:
                 dejsonlz4 = dejsonlz4PathLoc
             else:
-                if os.path.exists("dejsonlz4.com"):
-                    dejsonlz4 = "./dejsonlz4.com"
-                elif os.path.exists("dejsonlz4"):
-                    dejsonlz4 = "./dejsonlz4"
+                if shutil.which("dejsonlz4.com")
+                    dejsonlz4 = "dejsonlz4.com"
                 else:
                     raise FileNotFoundError("dejsonlz4 not found")
             studip_host = self.studip_host
