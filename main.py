@@ -73,7 +73,7 @@ class StudipSync:
             if not shutil.which("git"):
                 raise FileNotFoundError("git not found")
             if not os.path.exists(".git"):
-                subprocess.run(["git", "init"])
+                subprocess.run(["git", "-C", self.data_path, "init"])
         self.load_current_semester()
 
     def get_firefox_profile_dir(self): # Get main firefox profile directory
@@ -206,13 +206,13 @@ class StudipSync:
             os.symlink(os.path.join("..", "archive" , course), os.path.join(current_semester_path, course), target_is_directory=True)
         if self.use_git:
             # Count changes in this-semester dir
-            changesProcess = subprocess.run(["git", "diff" , "--name-only", "--",current_semester_path], capture_output=True)
+            changesProcess = subprocess.run(["git", "-C", self.data_path, "diff", "--name-only", "--", "current-semester"], capture_output=True)
             changes = changesProcess.stdout.decode("utf-8").split("\n")
             if len(changes) > 0:
                 # Commit changes
-                subprocess.run(["git", "add", current_semester_path])
-                subprocess.run(["git", "commit", "-m", self.git_commit_message_prefix + "updated this-semester links"])
-                subprocess.run(["git", "push"])
+                subprocess.run(["git", "-C", self.data_path, "add", current_semester_path])
+                subprocess.run(["git", "-C", self.data_path, "commit", "-m", self.git_commit_message_prefix + "updated this-semester links"])
+                subprocess.run(["git", "-C", self.data_path, "push"])
 
     def select_semester(self, semester=None):
         semesters = self.get("/semesters")["collection"]
@@ -242,9 +242,9 @@ class StudipSync:
         with open(os.path.join(self.data_path, ".current-semester"), "w") as f:
             f.write(semester_id)
         if self.use_git:
-            subprocess.run(["git", "add", ".current-semester"])
-            subprocess.run(["git", "commit", "-m", self.git_commit_message_prefix + "updated current semester"])
-            subprocess.run(["git", "push"]) # IDEA: push will be done one layer above this if head changed
+            subprocess.run(["git", "-C", self.data_path, "add", ".current-semester"])
+            subprocess.run(["git", "-C", self.data_path, "commit", "-m", self.git_commit_message_prefix + "updated current semester"])
+            subprocess.run(["git", "-C", self.data_path, "push"]) # IDEA: push will be done one layer above this if head changed
 
 
     def get_files(self, folder, parent_path):
@@ -280,6 +280,16 @@ class StudipSync:
                     # Write studip-sync:non-downloadable-file into placeholder file
                     with open(file_path, 'w') as f:
                         f.write("studip-sync:non-downloadable-file")
+
+        if self.use_git:
+            # Count changes in archive dir
+            changesProcess = subprocess.run(["git", "-C", self.data_path, "diff" , "--name-only", "--", "archive"], capture_output=True)
+            changes = changesProcess.stdout.decode("utf-8").split("\n")
+            if len(changes) > 0:
+                # Commit changes
+                subprocess.run(["git", "-C", self.data_path, "add", os.path.join(self.data_path, "archive")])
+                subprocess.run(["git", "-C", self.data_path, "commit", "-m", self.git_commit_message_prefix + "updated archive"])
+                subprocess.run(["git", "-C", self.data_path, "push"])
 
 def create_parser():
     parser = argparse.ArgumentParser()
