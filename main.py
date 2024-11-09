@@ -1,8 +1,7 @@
 #!/bin/env python3
-import configparser
 import argparse
-import toml
 import os
+import configparser
 import platform
 import json
 import shutil
@@ -50,50 +49,32 @@ class FzfPrompt:
 
         return selection
 
-class StudipConfig:
-    configLoc = ".studip-sync.toml"
-    studip_host = "studip.uni-passau.de"
-    use_git = False
-    git_commit_message = "Auto-sync StudIP files"
-    current_semester = ""
+class StudipSync:
+    # Config
     data_path = "."
+    studip_host = "studip.uni-passau.de"
+    prefix = "/studip/api.php"
     auth_method = "cookie"
     browser = "firefox"
-    cookie = ""
+    use_git = False
+    git_commit_message_prefix = "studip-sync: "
 
-    def load_config(self):
-        try:
-            with open(self.configLoc, 'rb') as f:
-                # read into string
-                file_content = f.read().decode('utf-8')
-                config = toml.load(file_content)
-                # I'm sure there's a better way to do this, but this works for now
-                self.studip_host = config.get("studip_host", self.studip_host)
-                self.use_git = config.get("use_git", self.use_git)
-                self.git_commit_message = config.get("git_commit_message", self.git_commit_message)
-                self.current_semester = config.get("current_semester", self.current_semester)
-                self.data_path = config.get("data_path", self.data_path)
-                self.auth_method = config.get("auth_method", self.auth_method)
-                self.browser = config.get("browser", self.browser)
-        except FileNotFoundError:
-            eprint("Config file not found, using default values")
+    # Cache
+    cookie = None
+    current_semester = None
+    user_id = None
 
-    def save_config(self):
-        with open(self.configLoc, 'w') as f:
-            config = {
-                "studip_host": self.studip_host,
-                "use_git": self.use_git,
-                "git_commit_message": self.git_commit_message,
-                "current_semester": self.current_semester,
-                "data_path": self.data_path,
-                "auth_method": self.auth_method,
-                "browser": self.browser,
-            }
-            toml.dump(config, f)
-
-    def __init__(self, configLoc):
-        self.configLoc = configLoc
-        self.load_config()
+    # constructor defaults all non specified config values to the default values (config is passed through from arguments in some explicit way
+    def __init__(self, config={}):
+        for key in config:
+            if hasattr(self, key):
+                setattr(self, key, config[key])
+        if self.use_git:
+            if not shutil.which("git"):
+                raise FileNotFoundError("git not found")
+            if not os.path.exists(".git"):
+                subprocess.run(["git", "init"])
+        self.load_current_semester()
 
     def get_firefox_profile_dir(self): # Get main firefox profile directory
         if platform.system() == "Windows":
@@ -112,7 +93,7 @@ class StudipConfig:
         return os.path.join(firefox_dir, profile)
 
     def get_cookie_from_browser(self):
-        if self.cookie != "":
+        if self.cookie is not None:
             return self.cookie
         if self.browser == "firefox":
             cookieFilePath = os.path.join(self.get_firefox_profile_dir(), "sessionstore-backups", "recovery.jsonlz4")
@@ -144,25 +125,17 @@ class StudipConfig:
         else:
             raise NotImplementedError(f"Auth method \"{self.auth_method}\" not supported")
 
-class StudipSync:
-    config : StudipConfig
-    prefix = "/studip/api.php"
-    user_id = ""
-
-    def __init__(self, config: StudipConfig):
-        self.config = config
-
     def get_user_id(self):
-        if self.user_id != "":
+        if self.user_id is not None:
             return self.user_id
         self.user_id = self.get("/user")["user_id"]
         return self.user_id
 
     def get_req(self, path):
         path = path.removeprefix(self.prefix)
-        url = f"https://{self.config.studip_host}{self.prefix}{path}"
+        url = f"https://{self.studip_host}{self.prefix}{path}"
         print(f"GET {url}")
-        resp = requests.get(url, headers={"Cookie": f"Seminar_Session={self.config.get_cookie()}"})
+        resp = requests.get(url, headers={"Cookie": f"Seminar_Session={self.get_cookie()}"})
         if resp.status_code != 200:
             raise Exception(f"Failed to get {url}: {resp.status_code}")
         return resp
@@ -217,24 +190,29 @@ class StudipSync:
         dirty_symbols_regex = r"[<>:\"\\|?*]"
         return re.sub(dirty_symbols_regex, "_", path)
 
+    def get_current_semester(self):
+        if self.current_semester is None:
+            return self.load_current_semester()
+        return self.current_semester
+
     def update_links(self):
         # Update symlinks
-        current_semester_path = os.path.join(self.config.data_path, "this-semester")
+        current_semester_path = os.path.join(self.data_path, "this-semester")
         if os.path.exists(current_semester_path):
             print(f"Removing old this-semester directory at {current_semester_path}")
             shutil.rmtree(current_semester_path)
         os.mkdir(current_semester_path)
-        courses = self.get_courses(self.config.current_semester)
+        courses = self.get_courses(self.get_current_semester())
         for course in list(set([self.escape_filename(course["title"]) for course in courses])):
             os.symlink(os.path.join("..", "archive" , course), os.path.join(current_semester_path, course), target_is_directory=True)
-        if self.config.use_git:
+        if self.use_git:
             # Count changes in this-semester dir
             changesProcess = subprocess.run(["git", "diff" , "--name-only", "--",current_semester_path], capture_output=True)
             changes = changesProcess.stdout.decode("utf-8").split("\n")
             if len(changes) > 0:
                 # Commit changes
                 subprocess.run(["git", "add", current_semester_path])
-                subprocess.run(["git", "commit", "-m", self.config.git_commit_message]) # IDEA: smarter commit messages?
+                subprocess.run(["git", "commit", "-m", self.git_commit_message_prefix + "updated this-semester links"])
                 subprocess.run(["git", "push"])
 
     def select_semester(self, semester=None):
@@ -249,9 +227,23 @@ class StudipSync:
                 raise Exception("No semester chosen")
             semester = chosen[0]
         semester_id = semesterNameToMeta[semester]["id"]        
-        self.config.current_semester = semester_id
-        self.config.save_config()
+        self.current_semester = semester_id
+        self.save_current_semester(semester_id)
         self.update_links()
+
+    def load_current_semester(self):
+        with open(os.path.join(self.data_path, ".current-semester"), "r") as f:
+            self.current_semester = f.read().strip()
+        return self.current_semester
+
+    def save_current_semester(self, semester_id):
+        with open(os.path.join(self.data_path, ".current-semester"), "w") as f:
+            f.write(semester_id)
+        if self.use_git:
+            subprocess.run(["git", "add", ".current-semester"])
+            subprocess.run(["git", "commit", "-m", self.git_commit_message_prefix + "updated current semester"])
+            subprocess.run(["git", "push"]) # IDEA: push will be done one layer above this if head changed
+
 
     def get_files(self, folder, parent_path):
         files = {}
@@ -265,14 +257,14 @@ class StudipSync:
         return files
 
     def sync(self):
-        courses = self.get_courses(self.config.current_semester)
+        courses = self.get_courses(self.current_semester)
         files = {}
         for course in courses:
             for key, value in self.get_files(course["top_folder"], course["title"]).items():
                 files[key] = value
 
         for file in files:
-            file_path = self.clean_path(os.path.join(self.config.data_path, "archive", file))
+            file_path = self.clean_path(os.path.join(self.data_path, "archive", file))
             if not os.path.exists(file_path):
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 print(f"Downloading {file} to {file_path}")
@@ -289,7 +281,11 @@ class StudipSync:
 
 def create_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', help='Path to config file', default='.studip-sync.toml')
+    parser.add_argument('--auth-method', help='Authentication method', default='cookie')
+    parser.add_argument('--browser', help='Browser to use for cookie extraction', default='firefox')
+    parser.add_argument('--data-path', help='Path to data directory', default='data', alias='d')
+    parser.add_argument('--use-git', help='Use git for version control', action='store_true')
+    parser.add_argument('--git-commit-message', help='Commit message for git', default='Update files')
     
     subparsers = parser.add_subparsers(dest='command')
     
@@ -308,20 +304,15 @@ def create_parser():
 def main():
     parser = create_parser()
     args = parser.parse_args()
-    
-    # cd to script dir so relative paths work
-    # INFO this assumes that the script lives with the data, remove this to make the script more general?
-    os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
-    config = StudipConfig(args.config)
-    studip_sync = StudipSync(config)
+    studip_sync = StudipSync(vars(args))
     
     if args.command == 'sync':
         studip_sync.sync()
     elif args.command == 'select-semester':
         studip_sync.select_semester(args.semester)
     elif args.command == 'get-cookie':
-        print(config.get_cookie())
+        print(studip_sync.get_cookie())
     else:
         parser.print_help()
 
