@@ -134,7 +134,7 @@ class StudipSync:
     def get_req(self, path):
         path = path.removeprefix(self.prefix)
         url = f"https://{self.studip_host}{self.prefix}{path}"
-        print(f"GET {url}")
+        eprint(f"GET {url}")
         resp = requests.get(url, headers={"Cookie": f"Seminar_Session={self.get_cookie()}"})
         if resp.status_code != 200:
             raise Exception(f"Failed to get {url}: {resp.status_code}")
@@ -153,6 +153,7 @@ class StudipSync:
             folder["subfolders"] = []
             for subfolder in subfolders:
                 folder["subfolders"].append(self.get_subfolders(subfolder))
+            return folder
         else:
             return {"files": [], "subfolders": []}
 
@@ -169,7 +170,7 @@ class StudipSync:
                 course["top_folder"] = self.get(path)
 
             if "top_folder" in course and "id" in course["top_folder"] and course["top_folder"]["id"]:
-                course["top_folder"]["id"] = self.get(f"/folder/{course['top_folder']['id']}/files")["collection"]
+                course["top_folder"]["files"] = self.get(f"/folder/{course['top_folder']['id']}/files")["collection"]
 
             if "top_folder" in course and "subfolders" in course["top_folder"] and course["top_folder"]["subfolders"]:
                 subfolders = []
@@ -199,7 +200,7 @@ class StudipSync:
         # Update symlinks
         current_semester_path = os.path.join(self.data_path, "this-semester")
         if os.path.exists(current_semester_path):
-            print(f"Removing old this-semester directory at {current_semester_path}")
+            eprint(f"Removing old this-semester directory at {current_semester_path}")
             shutil.rmtree(current_semester_path)
         os.mkdir(current_semester_path)
         courses = self.get_courses(self.get_current_semester())
@@ -232,11 +233,14 @@ class StudipSync:
         self.update_links()
 
     def load_current_semester(self):
-        with open(os.path.join(self.data_path, ".current-semester"), "r") as f:
-            self.current_semester = f.read().strip()
+        if os.path.exists(os.path.join(self.data_path, ".current-semester")):
+            with open(os.path.join(self.data_path, ".current-semester"), "r") as f:
+                self.current_semester = f.read().strip()
         return self.current_semester
 
     def save_current_semester(self, semester_id):
+        # Ensure that the directory exists
+        os.makedirs(self.data_path, exist_ok=True)
         with open(os.path.join(self.data_path, ".current-semester"), "w") as f:
             f.write(semester_id)
         if self.use_git:
@@ -247,7 +251,6 @@ class StudipSync:
 
     def get_files(self, folder, parent_path):
         files = {}
-        print(json.dumps(folder, indent=4))
         for file in folder["files"]:
             files[f"{parent_path}/{file['name']}"] = file["id"]
         if "subfolders" in folder:
@@ -260,21 +263,22 @@ class StudipSync:
         courses = self.get_courses(self.current_semester)
         files = {}
         for course in courses:
-            for key, value in self.get_files(course["top_folder"], course["title"]).items():
-                files[key] = value
+            if "top_folder" in course:
+                for key, value in self.get_files(course["top_folder"], course["title"]).items():
+                    files[key] = value
 
         for file in files:
             file_path = self.clean_path(os.path.join(self.data_path, "archive", file))
             if not os.path.exists(file_path):
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                print(f"Downloading {file} to {file_path}")
+                eprint(f"Downloading {file} to {file_path}")
                 file_meta = self.get(f"/file/{files[file]}")
                 if file_meta["is_downloadable"]:
                     with open(file_path, 'wb') as f:
                         f.write(self.get_no_parse(f"/file/{files[file]}/download"))
                 else:
-                    print(f"File {file} is not downloadable")
-                    print(f"Creating placeholder file {file_path}")
+                    eprint(f"File {file} is not downloadable")
+                    eprint(f"Creating placeholder file {file_path}")
                     # Write studip-sync:non-downloadable-file into placeholder file
                     with open(file_path, 'w') as f:
                         f.write("studip-sync:non-downloadable-file")
@@ -283,7 +287,7 @@ def create_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--auth-method', help='Authentication method', default='cookie')
     parser.add_argument('--browser', help='Browser to use for cookie extraction', default='firefox')
-    parser.add_argument('--data-path', help='Path to data directory', default='data', alias='d')
+    parser.add_argument('--data-path', "-d",help='Path to data directory', default='.')
     parser.add_argument('--use-git', help='Use git for version control', action='store_true')
     parser.add_argument('--git-commit-message', help='Commit message for git', default='Update files')
     
