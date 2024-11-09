@@ -102,7 +102,7 @@ class StudipSync:
             if dejsonlz4PathLoc:
                 dejsonlz4 = dejsonlz4PathLoc
             else:
-                if shutil.which("dejsonlz4.com")
+                if shutil.which("dejsonlz4.com"):
                     dejsonlz4 = "dejsonlz4.com"
                 else:
                     raise FileNotFoundError("dejsonlz4 not found")
