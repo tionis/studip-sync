@@ -10,6 +10,10 @@ import subprocess
 import requests
 import tempfile
 import re
+import sys
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 class FzfPrompt:
     def __init__(self, executable_path=None):
@@ -60,7 +64,9 @@ class StudipConfig:
     def load_config(self):
         try:
             with open(self.configLoc, 'rb') as f:
-                config = toml.load(f)
+                # read into string
+                file_content = f.read().decode('utf-8')
+                config = toml.load(file_content)
                 # I'm sure there's a better way to do this, but this works for now
                 self.studip_host = config.get("studip_host", self.studip_host)
                 self.use_git = config.get("use_git", self.use_git)
@@ -70,7 +76,7 @@ class StudipConfig:
                 self.auth_method = config.get("auth_method", self.auth_method)
                 self.browser = config.get("browser", self.browser)
         except FileNotFoundError:
-            print("Config file not found, using default values")
+            eprint("Config file not found, using default values")
 
     def save_config(self):
         with open(self.configLoc, 'w') as f:
@@ -150,11 +156,12 @@ class StudipSync:
         if self.user_id != "":
             return self.user_id
         self.user_id = self.get("/user")["user_id"]
-        return
+        return self.user_id
 
     def get_req(self, path):
-        str.removeprefix(self.prefix, path)
+        path = path.removeprefix(self.prefix)
         url = f"https://{self.config.studip_host}{self.prefix}{path}"
+        print(f"GET {url}")
         resp = requests.get(url, headers={"Cookie": f"Seminar_Session={self.config.get_cookie()}"})
         if resp.status_code != 200:
             raise Exception(f"Failed to get {url}: {resp.status_code}")
@@ -168,7 +175,7 @@ class StudipSync:
 
     def get_subfolders(self, folder):
         if "is_readable" in folder and folder["is_readable"]:
-            subfolders = self.get(f"/folder/files/{folder['id']}/subfolders")["collection"]
+            subfolders = self.get(f"/folder/{folder['id']}/subfolders")["collection"]
             folder["files"] = self.get(f"/folder/{folder['id']}/files")["collection"]
             folder["subfolders"] = []
             for subfolder in subfolders:
@@ -181,17 +188,17 @@ class StudipSync:
         if semester_id is None:
             raw_courses = self.get(f"/user/{self.get_user_id()}/courses")["collection"]
         else:
-            raw_courses = self.get(f"/semester/{semester_id}/courses?semester={semester_id}")["collection"]
+            raw_courses = self.get(f"/user/{self.get_user_id()}/courses?semester={semester_id}")["collection"]
 
-        for course in raw_courses:
-            path = course["modules"]["documents"]
-            if path:
+        for course in raw_courses.values():
+            path = course["modules"]["documents"] if "documents" in course["modules"] else None
+            if path is not None:
                 course["top_folder"] = self.get(path)
 
-            if course["top_folder"]["id"]:
+            if "top_folder" in course and "id" in course["top_folder"] and course["top_folder"]["id"]:
                 course["top_folder"]["id"] = self.get(f"/folder/{course['top_folder']['id']}/files")["collection"]
 
-            if course["top_folder"]["subfolders"]:
+            if "top_folder" in course and "subfolders" in course["top_folder"] and course["top_folder"]["subfolders"]:
                 subfolders = []
                 for subfolder in course["top_folder"]["subfolders"]:
                     subfolders.append(self.get_subfolders(subfolder))
@@ -214,11 +221,12 @@ class StudipSync:
         # Update symlinks
         current_semester_path = os.path.join(self.config.data_path, "this-semester")
         if os.path.exists(current_semester_path):
+            print(f"Removing old this-semester directory at {current_semester_path}")
             shutil.rmtree(current_semester_path)
         os.mkdir(current_semester_path)
         courses = self.get_courses(self.config.current_semester)
-        for course in [self.escape_filename(course["title"]) for course in courses]:
-            os.symlink(os.path.join(self.config.data_path, "archive" , course), os.path.join(current_semester_path, course))
+        for course in list(set([self.escape_filename(course["title"]) for course in courses])):
+            os.symlink(os.path.join("..", "archive" , course), os.path.join(current_semester_path, course), target_is_directory=True)
         if self.config.use_git:
             # Count changes in this-semester dir
             changesProcess = subprocess.run(["git", "diff" , "--name-only", "--",current_semester_path], capture_output=True)
@@ -232,8 +240,8 @@ class StudipSync:
     def select_semester(self, semester=None):
         semesters = self.get("/semesters")["collection"]
         semesterNameToMeta = {}
-        for key, value in semesters.items():
-            semesterNameToMeta[value["title"]] = value
+        for val in semesters.values():
+            semesterNameToMeta[val["title"]] = val
         if semester is None:
             fzf = FzfPrompt()
             chosen = fzf.prompt(semesterNameToMeta.keys())
@@ -247,6 +255,7 @@ class StudipSync:
 
     def get_files(self, folder, parent_path):
         files = {}
+        print(json.dumps(folder, indent=4))
         for file in folder["files"]:
             files[f"{parent_path}/{file['name']}"] = file["id"]
         if "subfolders" in folder:
@@ -291,6 +300,9 @@ def create_parser():
     select_parser = subparsers.add_parser('select-semester')
     select_parser.add_argument('semester', nargs='?')
     
+    # get-cookie subcommand
+    subparsers.add_parser('get-cookie')
+    
     return parser
 
 def main():
@@ -308,6 +320,8 @@ def main():
         studip_sync.sync()
     elif args.command == 'select-semester':
         studip_sync.select_semester(args.semester)
+    elif args.command == 'get-cookie':
+        print(config.get_cookie())
     else:
         parser.print_help()
 
