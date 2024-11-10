@@ -72,8 +72,13 @@ class StudipSync:
         if self.use_git:
             if not shutil.which("git"):
                 raise FileNotFoundError("git not found")
-            if not os.path.exists(".git"):
-                subprocess.run(["git", "-C", self.data_path, "init"])
+            git_top_level_process = subprocess.run(["git", "-C", self.data_path, "rev-parse", "--show-toplevel"], capture_output=True)
+            if git_top_level_process.returncode != 0:
+                eprint("No git repository found in data path")
+                eprint("Please initialize the repository with 'git init'")
+                eprint("The author also recommends using lfs to track large files")
+                raise Exception("No git repository found")
+            self.top_level = git_top_level_process.stdout.decode("utf-8").strip()
         self.load_current_semester()
 
     def get_firefox_profile_dir(self): # Get main firefox profile directory
