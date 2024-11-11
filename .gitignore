@@ -1,3 +1,7 @@
 .idea
 .studip-sync.toml
 data
+.venv
+.envrc
+.env
+dist

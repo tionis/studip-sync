@@ -1,0 +1,29 @@
+[project]
+name = "studip_sync"
+version = "0.0.1"
+authors = [
+  { name="tionis", email="me@tionis.dev" },
+]
+description = "sync studip files"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/tionis/studip-sync"
+Issues = "https://github.com/tionis/studip-sync/issues"
+
+[project.scripts]
+studip_sync = "studip_sync:app"
+
+
+[project.entry-points."pipx.run"]
+greetings = "studip_sync.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
