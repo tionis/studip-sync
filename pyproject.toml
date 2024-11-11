@@ -22,7 +22,7 @@ studip_sync = "studip_sync:app"
 
 
 [project.entry-points."pipx.run"]
-greetings = "studip_sync.cli:app"
+studip_sync = "studip_sync.cli:app"
 
 [build-system]
 requires = ["hatchling"]
