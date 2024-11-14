@@ -5,6 +5,8 @@ It can be installed via pipx:
 
 ```bash
 pipx install git+https://github.com/tionis/studip_sync
+# or if you want to the use newer uv tool:
+uv tool install git+https://github.com/tionis/studip_sync
 
 ```
 
